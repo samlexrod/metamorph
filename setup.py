@@ -11,7 +11,7 @@ setup(
     url="https://github.com/samlexrod/metamorph",
     packages=find_packages(),
     install_requires=[
-        scrubadub=="2.0.0"
+        "scrubadub==2.0.0"
     ],
     classifiers=[
         "Programming Language :: Python :: 3",
