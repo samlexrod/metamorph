@@ -12,7 +12,7 @@ setup(
     packages=find_packages(),
     install_requires=[
         "scikit-learn==0.24.2",
-        "scrubadub==2.0.0"        
+        "scrubadub==2.0.1"        
     ],
     classifiers=[
         "Programming Language :: Python :: 3",
