@@ -11,8 +11,8 @@ setup(
     url="https://github.com/samlexrod/metamorph",
     packages=find_packages(),
     install_requires=[
-        "scikit-learn==0.24.2",
-        "scrubadub==2.0.1"        
+        "scrubadub==2.0.1",
+        "Faker==24.1.0"
     ],
     classifiers=[
         "Programming Language :: Python :: 3",
