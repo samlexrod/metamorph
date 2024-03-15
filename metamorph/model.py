@@ -226,7 +226,8 @@ class Metamorph():
         assert push_direction in ['forwards', 'backwards', 'f', 'b'], "push_direction must be forwards(f) or backwards(b). forwards(f) is default."
         assert push_method in ['all', 'each'], "push_method must be all or each"
         assert push_type in ['month', 'day'], "Must be month or day"
-        assert (push_window > 0 and type(push_window) == int), "push_window must be greater than 0 and must be of type int or `push_window = 'random'`"
+        assert type(push_window) == int, "push_window must be of type int"
+        assert push_window > 0, "push_window must be greater than 0"
         assert type(push_random_window) == bool, "Must be a boolean value True or False"
         
         # setting variables
