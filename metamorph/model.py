@@ -246,7 +246,7 @@ class Metamorph():
             if push_method == 'all':
                 print(f"\t-> Pushing all rows by {offset_int} count on {series.name} on a daily basis.")
                 offset_int_direction = offset_int if push_direction == 'forwards' else -offset_int
-                results = (series + pd.DateOffset(days=offset_int_direction)).dt.date
+                results = (series.dropna() + pd.DateOffset(days=offset_int_direction)).dt.date
 
             elif push_method == 'each':
                 print(f"\t-> Pushing each rows by its own random count with a push_window of {push_window} count on {series.name}.")
@@ -255,13 +255,13 @@ class Metamorph():
                     warnings.warn(msg)
                 offset_int = np.random.randint(1, push_window+1)
                 offset_int_direction = offset_int if push_direction == 'forwards' else -offset_int
-                results = series.apply(lambda x: x + pd.DateOffset(days=offset_int_direction)).dt.date
+                results = series.dropna().apply(lambda x: x + pd.DateOffset(days=offset_int_direction)).dt.date
             
         elif push_type == 'month':
             if push_method == 'all':
                 print(f"\t-> Pushing all rows by {offset_int} count on {series.name} on a monthly basis.")
                 offset_int_direction = offset_int if push_direction == 'forwards' else -offset_int
-                results = (series + pd.DateOffset(months=offset_int_direction)).dt.date
+                results = (series.dropna() + pd.DateOffset(months=offset_int_direction)).dt.date
             elif push_method == 'each':
                 print(f"\t-> Pushing each rows by its own random count with a push_window of {push_window} count on {series.name}.")
                 if not push_random_window: 
@@ -269,7 +269,7 @@ class Metamorph():
                     warnings.warn(msg)
                 offset_int = np.random.randint(1, push_window+1)
                 offset_int_direction = offset_int if push_direction == 'forwards' else -offset_int
-                results = series.apply(lambda x: x + pd.DateOffset(months=offset_int_direction)).dt.date
+                results = series.dropna().apply(lambda x: x + pd.DateOffset(months=offset_int_direction)).dt.date
 
         # Ensuring the push does not go into the future
         results = results.where(results <= push_limit, push_limit)
