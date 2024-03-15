@@ -278,12 +278,15 @@ class Metamorph():
         series = pd.Series,
         **kwargs
         ) -> pd.Series:
-        context_word_list = kwargs.get("context_word_list")
 
-        series = series.apply(len)
-        series = series.apply(lambda x: self._lorem_util.get_paragraph(count=100, sep='\n\n')[:x])
- 
-        return series
+        def generate_text(text):
+            text_length = len(text)
+            faker_text = self._faker_util.fake.sentence(ext_word_list=self._vocab_util.medical_keywords)
+            while len(faker_text) < text_length:
+                faker_text += ' ' + self._faker_util.fake.sentence(ext_word_list=self._vocab_util.medical_keywords)           
+            return faker_text[:text_length]
+
+        return series.apply(lambda x: generate_text(x))
     
 
     
