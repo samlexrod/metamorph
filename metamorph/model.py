@@ -1,6 +1,7 @@
 # other dependencies
 import scrubadub
-import names
+from . import faker_util
+from . import vocab
 import pandas as pd
 import os
 import datetime
@@ -8,53 +9,32 @@ import numpy as np
 import warnings
 import pickle
 import re
+from uuid import uuid4
 
-class Metamorph(scrubadub.Scrubber):
+
+class Metamorph():
     
     # Class attributes
-    _key_names = []
-    _metamorph_keys = {'Docstring': 'Index 0: Key, Index 1: Original Value. Use series.replace(*array) to revert.', 
-                       'KeyPair': {}}
+    _key_mappings_df = None
+    _scurbadub_util = scrubadub.Scrubber #TODO: Create scrubadub_util.py to separate the package functions
+    _faker_util = faker_util
+    _vocab_util = vocab
     _allowed_genders = {'f', 'm', 'female', 'male'}
     _offset_int = None
     
     def __init__(self, 
                  mappings: dict = {}, 
-                 push_method: str = 'all',
-                 push_type: str = 'month',
-                 push_window: int = 1, 
-                 push_random_window: bool = False,
-                 push_date_limit: datetime.date = None,
-                 random_date_window: int = 1,
-                 morphed_key_location: str = os.path.expanduser('~'),
+                 key_location: str = os.path.expanduser('~'),
                  active: bool = True) -> None:
         
-        # error handling
-        assert push_method in ['all', 'each'], "Must be all or each"
-        assert push_type in ['month', 'day'], "Must be month or day"
-        assert push_window > 0 and type(push_window) == int, "Must be greater than 0 and int"
-        assert type(push_random_window) == bool, "Must be a boolean value True or False"
-        
         self._mappings = mappings 
-        self._push_method = push_method 
-        self._push_type = push_type
-        self._push_window = push_window
-        self._random_push_window = push_random_window
-        self._random_date_window = random_date_window
-        self._push_date_limit = push_date_limit
         self._active = active
-        Metamorph._morphed_key_location = morphed_key_location
+        Metamorph._key_location = key_location
         print(f"""
         Model Settings
         --------------
         mappings: {mappings}
-        push_method (all, each): {push_method}
-        push_type (month, day): {push_type}
-        push_months_window: {push_window}
-        push_random_window (True, False): {push_random_window}
-        push_date_limit: {push_date_limit}
-        random_date_window: {random_date_window}
-        morphed_key_location: {morphed_key_location}
+        key_location: {key_location}
         active: {active}  
         """)
         super().__init__()
@@ -85,6 +65,8 @@ class Metamorph(scrubadub.Scrubber):
                 return self._transform_randomdate(series, **kwargs)
             elif type=='push date':
                 return self._transform_pushdate(series, **kwargs)
+            elif type=='medical text':
+                return self._transform_medical_text(series, **kwargs)
             else:
                 raise ValueError(f"type `{type}` was not found")
         else: 
@@ -92,22 +74,40 @@ class Metamorph(scrubadub.Scrubber):
             warnings.warn("active is deactivated. No values have been transformed. Set active=True to apply Metamorph transformations.")
             return series
         
-    def save_keys(self, location):
-        
+    def save_keys(self, location: str = None):
+        if not location:
+            msg = "The keys will be saved on the default location. Use `location = 'your/secure/path' or mortph = Metamporth(key_location = 'your/secure/path')` to save on a secure location."
+            warnings.warn(msg)
+
+        location = location or self._key_location
+
         if location.find('~') >= 0:
             location = location.replace('~', os.path.expanduser('~'))
-        # saving keys in .pickle file
-        with open(os.path.join(location, 'metamorph.pickle'), 'wb') as f:
-            pickle.dump(self._metamorph_keys, f)
-        
-    def recoverkey(self, series: pd.Series) -> pd.Series:
-        #PSEUDO: 
-        with open(os.path.join(self._morphed_key_location, 'metamorph.pickle'), 'rb') as f:
-            keys = pickle.load(f)
+
+        mapping_key_file_path = os.path.join(location, "key_mappings.json")
+        self._key_mappings_df.to_json(mapping_key_file_path, orient="records")
+        print(f"Keys have been saved on {mapping_key_file_path}.")  
+
+
+    def recover_key_mappings(self, location: str = None) -> pd.Series:
+        location = location or self._key_location
+        mapping_key_file_path = os.path.join(location, "key_mappings.json")
+
+        try:
+            self._key_mappings_df = pd.read_json(mapping_key_file_path)
+        except:
+            msg = f"Could not find mapping keys in {mapping_key_file_path}. Please pass `location = 'your/secure/path' or mortph = Metamporth(key_location = 'your/secure/path')` to locate your key_mappings.json file.`"
+            raise ValueError(msg)
+
+        return self._key_mappings_df
             
         
     @classmethod
-    def _transform_key(cls, series: pd.Series) -> pd.Series:
+    def _transform_key(cls, 
+        series: pd.Series,
+        save_keys: bool = True,
+        **kwargs
+        ) -> pd.Series:
         """Internal method used to de-identify unique identifiers such as claim numbers, etc.
         It should be used from the .transform method 
         E.g. morph.transform(series['CLAIM_NUMBER'], 'key')
@@ -118,29 +118,19 @@ class Metamorph(scrubadub.Scrubber):
         Returns:
             pd.Series: returns a pandas series with the de-identified values
         """
-        def random_id(x: str) -> str:
-            """
-            Creates a random id from numerical ids passed to the class.
-            It does not allow the same random id.
-            """
-            # creating new random id
-            random_range = ('1'+'0'*(len(x)-1), '9'*len(x))
-            output = np.random.randint(*random_range)
-            
-            # handling same value id before return
-            if output==int(x): 
-                return random_id(x)
-            return output
+
+        def generate_uuid(x):
+            return str(uuid4())
         
-        # de-identifying on unique ids
-        unique_ids = pd.Series(series.astype(str).unique())
-        keys_value_np = np.array(list(map(lambda x: (x, random_id(re.sub('\D', '', x))), unique_ids)))
+        # Generating fake keys
+        data = {"key": series, "fake_key": series.apply(generate_uuid) }
+        key_mappings_df = pd.DataFrame(data)
+        cls._key_mappings_df = key_mappings_df
+
+        location = kwargs.get("location", None)
+        if save_keys: cls.save_keys(cls, location)
         
-        # keeping track of transformations
-        cls._key_names.append(series.name)
-        cls._metamorph_keys['KeyPair'].setdefault(series.name, keys_value_np.T[::-1])
-        
-        return series.astype(str).replace(*keys_value_np.T)
+        return key_mappings_df.fake_key
     
     
     def _transform_full_name(self, series: pd.Series, kwargs = 'raise') -> pd.Series:
@@ -160,7 +150,8 @@ class Metamorph(scrubadub.Scrubber):
         Returns:
             pd.Series: returns a pandas series with the de-identified values
         """
-        series = series.astype(str).str.replace('.0','').replace(self._mappings.get(series.name))
+        # Replaces other gender categories with mapped categories when provided on instantiation
+        series = series.astype(str).replace(self._mappings.get(series.name))
         
         genders_not_found = set(series.astype(str).str.lower().unique()).difference(self._allowed_genders)
         errors = kwargs.get('errors', 'raise')
@@ -168,15 +159,16 @@ class Metamorph(scrubadub.Scrubber):
             if errors == 'raise':
                 print(self._mappings.get(series.name))
                 display(series.to_frame('mappings').value_counts())
-                raise ValueError(f"Must provide a pandas series with gender identifiers {self._allowed_genders} or pass errors='ignore' to assign a random gender name.")
+                raise ValueError(f"Must provide a pandas series with gender identifiers {self._allowed_genders} or pass errors='ignore' to assign a random name to other genders.")
             elif errors == 'ignore':
-                warnings.warn(f"Random gender names have been assigned for genders {genders_not_found}.")
+                msg = f"Random gender names have been assigned for genders {genders_not_found}."
+                warnings.warn(msg)
             else:
                 raise ValueError(f"Parameter `{errors}` was not recognized by the method. Try errors='ignore', or errors='raise'")
     
-        return series.str.lower().apply(lambda x: names.get_full_name(gender=x))
+        return series.str.lower().apply(lambda x: self._faker_util.get_full_name(gender=x))
     
-    def _transform_randomdate(self, series: pd.Series, **kwargs) -> pd.Series:
+    def _transform_randomdate(self, series: pd.Series, random_date_window: str = 1, **kwargs) -> pd.Series:
         """Internal method used to de-identify dates.
         It should be used from the .transform method.
         E.g. morph.transform(series['date'], 'date')
@@ -189,6 +181,12 @@ class Metamorph(scrubadub.Scrubber):
         Returns:
             pd.Series: returns a pandas series with the de-identified values
         """
+        if not kwargs.get("random_date_window"):
+            msg = f"Using the default random_date_window = 1. Pass random_date_window = 2 for 2 months window for example."
+            warnings.warn(msg)
+
+        random_date_window = kwargs.get("random_date_window", random_date_window)
+
         def randomize(x: int, y: int) -> int:
             """Creates a random ouput to shift the date
             It does not allow the same random number.
@@ -198,10 +196,13 @@ class Metamorph(scrubadub.Scrubber):
                 output = randomize(x, y)
             return output
         
-        rand_month_window = kwargs.get('random_date_window', self._random_date_window)
+        rand_month_window = kwargs.get('random_date_window', random_date_window)
         
         # offsets the months
-        shifted_date_ds = series.apply(lambda x: x if pd.isnull(x) else x + pd.DateOffset(months=randomize(-rand_month_window, rand_month_window)))
+        try: shifted_date_ds = series.apply(lambda x: x if pd.isnull(x) else x + pd.DateOffset(months=randomize(-rand_month_window, rand_month_window)))
+        except: 
+            series = pd.to_datetime(series)
+            shifted_date_ds = series.apply(lambda x: x if pd.isnull(x) else x + pd.DateOffset(months=randomize(-rand_month_window, rand_month_window)))
         
         # offsets the day withing the shifted month's available days
         # shifted_date_ds = shifted_date_ds.apply(lambda x: x if pd.isnull(x) else x + pd.DateOffset(days=randomize(1, (x + pd.offsets.MonthEnd()).day ) ))
@@ -209,24 +210,88 @@ class Metamorph(scrubadub.Scrubber):
         
         return pd.to_datetime(shifted_date_ds, errors='coerce').dt.date
     
-    def _transform_pushdate(self, series: pd.Series) -> pd.Series:
+    def _transform_pushdate(
+        self, 
+        series: pd.Series,
+        push_method: str,
+        push_type: str,
+        push_window: int,
+        push_direction: str = 'forwards',
+        push_random_window: bool = False,
+        push_limit: datetime.date = datetime.datetime.now().date(),
+        **kwargs
+        ) -> pd.Series:
+
+        # error handling
+        assert push_direction in ['forwards', 'backwards', 'f', 'b'], "push_direction must be forwards(f) or backwards(b). forwards(f) is default."
+        assert push_method in ['all', 'each'], "push_method must be all or each"
+        assert push_type in ['month', 'day'], "Must be month or day"
+        assert (push_window > 0 and type(push_window) == int), "push_window must be greater than 0 and must be of type int or `push_window = 'random'`"
+        assert type(push_random_window) == bool, "Must be a boolean value True or False"
         
         # setting variables
-        push_method = self._push_method
-        push_type = self._push_type
-        offset_int = self._push_window
+        offset_int = push_window
         
         # setting the random offset int for the first time of it is not in the object
-        if self._random_push_window:
-            offset_int = self._offset_int or np.random.randint(1, self._push_window+1)
+        series = pd.to_datetime(series)
+        if push_random_window:
+            offset_int = self._offset_int or np.random.randint(1, push_window+1)
         
             # preserving the random offset to use in future offsets
             self._offset_int = offset_int
         
-        
+        print("PUSH STATUS:")
         if push_type == 'day':
             if push_method == 'all':
-                return (series + pd.DateOffset(days=offset_int)).dt.date
+                print(f"\t-> Pushing all rows by {offset_int} count on {series.name} on a daily basis.")
+                offset_int_direction = offset_int if push_direction == 'forwards' else -offset_int
+                results = (series + pd.DateOffset(days=offset_int_direction)).dt.date
+
             elif push_method == 'each':
-                if not self._random_push_window: warnings.warn("push_type each always randomizes the push. Use push_type = 'all' when push_random_window is False")
-                return series.apply(lambda x: x + pd.DateOffset(days=np.random.randint(1, self._push_window+1))).dt.date
+                print(f"\t-> Pushing each rows by its own random count with a push_window of {push_window} count on {series.name}.")
+                if not push_random_window: 
+                    msg = "`push_type = each` always randomizes the push on each item. Set `push_random_window = True` to suppress this warning."
+                    warnings.warn(msg)
+                offset_int = np.random.randint(1, push_window+1)
+                offset_int_direction = offset_int if push_direction == 'forwards' else -offset_int
+                results = series.apply(lambda x: x + pd.DateOffset(days=offset_int_direction)).dt.date
+            
+        elif push_type == 'month':
+            if push_method == 'all':
+                print(f"\t-> Pushing all rows by {offset_int} count on {series.name} on a monthly basis.")
+                offset_int_direction = offset_int if push_direction == 'forwards' else -offset_int
+                results = (series + pd.DateOffset(months=offset_int_direction)).dt.date
+            elif push_method == 'each':
+                print(f"\t-> Pushing each rows by its own random count with a push_window of {push_window} count on {series.name}.")
+                if not push_random_window: 
+                    msg = "`push_type = each` always randomizes the push on each item. Set `push_random_window = True` to suppress this warning."
+                    warnings.warn(msg)
+                offset_int = np.random.randint(1, push_window+1)
+                offset_int_direction = offset_int if push_direction == 'forwards' else -offset_int
+                results = series.apply(lambda x: x + pd.DateOffset(months=offset_int_direction)).dt.date
+
+        # Ensuring the push does not go into the future
+        results = results.where(results <= push_limit, push_limit)
+        return results
+    
+    def _transform_medical_text(self,
+        series = pd.Series,
+        **kwargs
+        ) -> pd.Series:
+        context_word_list = kwargs.get("context_word_list")
+
+        series = series.apply(len)
+        series = series.apply(lambda x: self._lorem_util.get_paragraph(count=100, sep='\n\n')[:x])
+ 
+        return series
+    
+
+    
+
+
+
+
+
+
+
+            
